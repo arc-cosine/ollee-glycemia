@@ -1,0 +1,59 @@
+name: Google Health APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply the uploaded Google Health zip
+        run: |
+          ZIP="$(git log -1 --diff-filter=AM --name-only --format= -- '*.zip' | sed -n '1p')"
+          if [ -z "$ZIP" ]; then ZIP="$(find . -maxdepth 1 -iname '*.zip' | sed -n '1p')"; fi
+          if [ -z "$ZIP" ]; then echo "::error::Upload ollee-glycemia-googlehealth-upload.zip to the repository first"; exit 1; fi
+          echo "Using $ZIP"
+          mkdir -p /tmp/gh
+          unzip -o -q "$ZIP" -d /tmp/gh
+          APPDIR="$(find /tmp/gh -maxdepth 2 -type d -name app | sed -n '1p')"
+          if [ -z "$APPDIR" ]; then echo "::error::No app folder inside $ZIP"; exit 1; fi
+          cp -r "$APPDIR/." app/
+          test -f app/src/main/java/pl/cukrzycowy/ollee/glycemia/GoogleHealthProvider.kt
+          git status --short
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Build debug APK
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+          cp app/build/outputs/apk/debug/app-debug.apk "ollee-glycemia-googlehealth-${{ github.run_number }}.apk"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ollee-glycemia-googlehealth-${{ github.run_number }}
+          path: ollee-glycemia-googlehealth-*.apk
+
+      - name: Publish the APK as a release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release create "googlehealth-${{ github.run_number }}" \
+            "ollee-glycemia-googlehealth-${{ github.run_number }}.apk" \
+            --target "${{ github.sha }}" \
+            --title "Google Health APK #${{ github.run_number }}" \
+            --notes "Ollee Glycemia debug build with the Google Health (steps) source."
